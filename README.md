@@ -1,9 +1,9 @@
 # AI Code Review
 
 [![Go Version](https://img.shields.io/badge/go-1.25+-00ADD8?logo=go)](https://go.dev/)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/RicardoMinglu/ai_codereview/ci.yml?branch=master&label=build)](https://github.com/RicardoMinglu/ai_codereview/actions)
-[![License](https://img.shields.io/github/license/RicardoMinglu/ai_codereview)](LICENSE)
-[![GitHub Stars](https://img.shields.io/github/stars/RicardoMinglu/ai_codereview?style=social)](https://github.com/RicardoMinglu/ai_codereview/stargazers)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/RicardoMinglu/ai_codereview/.github%2Fworkflows%2Fci.yml?branch=master&label=build)](https://github.com/RicardoMinglu/ai_codereview/actions)
+[![License](https://img.shields.io/github/license/ricardominglu/ai_codereview)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/ricardominglu/ai_codereview?style=social)](https://github.com/RicardoMinglu/ai_codereview/stargazers)
 
 基于大语言模型的自动化代码评审服务。  
 当 GitHub 仓库发生 `push` 或 `pull_request` 事件时，系统会自动获取代码变更、调用 AI 进行评审，并生成结构化报告与通知。

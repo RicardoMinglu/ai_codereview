@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Code Review</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #333; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        header { background: #1a1a2e; color: #fff; padding: 20px 0; margin-bottom: 24px; }
+        header .container { display: flex; justify-content: space-between; align-items: center; }
+        header h1 { font-size: 1.5rem; }
+        .stats { display: flex; gap: 16px; }
+        .stat { background: rgba(255,255,255,0.1); padding: 8px 16px; border-radius: 8px; text-align: center; }
+        .stat-num { font-size: 1.5rem; font-weight: bold; }
+        .stat-label { font-size: 0.75rem; opacity: 0.7; }
+        .filter { margin-bottom: 16px; }
+        .filter input { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; width: 300px; font-size: 0.9rem; }
+        .filter button { padding: 8px 16px; background: #1a1a2e; color: #fff; border: none; border-radius: 6px; cursor: pointer; margin-left: 8px; }
+        table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid #eee; }
+        th { background: #fafafa; font-weight: 600; font-size: 0.85rem; color: #666; text-transform: uppercase; }
+        td { font-size: 0.9rem; }
+        tr:hover { background: #f9f9f9; }
+        .score { display: inline-block; padding: 4px 12px; border-radius: 20px; font-weight: bold; color: #fff; font-size: 0.85rem; }
+        .severity-critical { color: #ef4444; }
+        .severity-warning { color: #eab308; }
+        a { color: #3b82f6; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        .pagination { display: flex; justify-content: center; gap: 8px; margin-top: 20px; }
+        .pagination a, .pagination span { padding: 8px 14px; border-radius: 6px; border: 1px solid #ddd; }
+        .pagination span { background: #1a1a2e; color: #fff; border-color: #1a1a2e; }
+        .empty { text-align: center; padding: 60px 20px; color: #999; }
+        .empty h2 { margin-bottom: 8px; }
+        .commit-sha { font-family: monospace; font-size: 0.85rem; color: #666; }
+        .time { color: #999; font-size: 0.85rem; }
+        .status { font-size: 0.8rem; padding: 2px 8px; border-radius: 4px; }
+        .status.success { background: #dcfce7; color: #166534; }
+        .status.failed { background: #fee2e2; color: #991b1b; }
+        .status.pending { background: #fef3c7; color: #92400e; }
+        .error-msg { font-size: 0.75rem; color: #991b1b; }
+        .retry-btn { padding: 6px 12px; background: #64748b; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 0.8rem; white-space: nowrap; }
+        .retry-btn:hover { opacity: 0.92; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>AI Code Review</h1>
+            <div class="stats">
+                <div class="stat">
+                    <div class="stat-num">{{.Total}}</div>
+                    <div class="stat-label">Total Reviews</div>
+                </div>
+            </div>
+        </div>
+    </header>
+    <div class="container">
+        <form class="filter" method="get" action="/">
+            <input type="text" name="repo" placeholder="Filter by repository (e.g. owner/repo)" value="{{.Repo}}">
+            <button type="submit">Filter</button>
+            {{if .Repo}}<a href="/" style="margin-left:8px">Clear</a>{{end}}
+        </form>
+
+        {{if .Reports}}
+        <table>
+            <thead>
+                <tr>
+                    <th>Status</th>
+                    <th>Score</th>
+                    <th>Repository</th>
+                    <th>Ref</th>
+                    <th>Author</th>
+                    <th>Commit</th>
+                    <th>Issues</th>
+                    <th>Time</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .Reports}}
+                <tr>
+                    <td>
+                        {{$s := or .Status "success"}}
+                        {{if eq $s "success"}}<span class="status success">成功</span>{{end}}
+                        {{if eq $s "failed"}}<span class="status failed">失败</span>{{if .ErrorMsg}}<br><span class="error-msg" title="{{.ErrorMsg}}">{{slice .ErrorMsg 0 30}}{{if gt (len .ErrorMsg) 30}}...{{end}}</span>{{end}}{{end}}
+                        {{if eq $s "pending"}}<span class="status pending">处理中</span>{{end}}
+                    </td>
+                    <td>{{if eq $s "success"}}<span class="score" style="background:{{scoreColor .Score}}">{{.Score}}</span>{{else}}-{{end}}</td>
+                    <td><a href="/?repo={{.RepoFullName}}">{{.RepoFullName}}</a></td>
+                    <td>{{.Ref}}</td>
+                    <td>{{.Author}}</td>
+                    <td>
+                        <a href="{{$.BaseURL}}/report/{{.ID}}">{{.CommitMsg}}</a>
+                        <br><span class="commit-sha">{{slice .CommitSHA 0 8}}</span>
+                    </td>
+                    <td>
+                        {{if eq $s "success"}}{{with .SeverityCounts}}
+                        {{if .Critical}}<span class="severity-critical">{{.Critical}} critical</span> {{end}}
+                        {{if .Warning}}<span class="severity-warning">{{.Warning}} warning</span> {{end}}
+                        {{end}}{{else}}-{{end}}
+                    </td>
+                    <td><span class="time">{{.CreatedAt.Format "2006-01-02 15:04"}}</span></td>
+                    <td>
+                        <form method="post" action="/report/{{.ID}}/retry" style="margin:0">
+                            <button type="submit" class="retry-btn" title="使用当前记录重新拉取 diff 并评审">再次评审</button>
+                        </form>
+                    </td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+
+        {{if gt .TotalPages 1}}
+        <div class="pagination">
+            {{if gt .Page 1}}<a href="/?page={{subtract .Page 1}}{{if .Repo}}&repo={{.Repo}}{{end}}">&laquo; Prev</a>{{end}}
+            <span>{{.Page}} / {{.TotalPages}}</span>
+            {{if lt .Page .TotalPages}}<a href="/?page={{add .Page 1}}{{if .Repo}}&repo={{.Repo}}{{end}}">Next &raquo;</a>{{end}}
+        </div>
+        {{end}}
+
+        {{else}}
+        <div class="empty">
+            <h2>No reviews yet</h2>
+            <p>Configure a GitHub Webhook to start receiving code reviews.</p>
+        </div>
+        {{end}}
+    </div>
+</body>
+</html>

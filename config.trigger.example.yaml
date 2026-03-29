@@ -1,0 +1,39 @@
+# 若使用单独的触发/调试配置，可复制为 config.trigger.yaml（该文件已在 .gitignore 中，勿提交密钥）
+server:
+  port: 8078
+  base_url: "http://localhost:8078"
+
+github:
+  token: "ghp_xxxxxxxxxxxxxxxxxxxx"
+  webhook_secret: "your-webhook-secret"
+
+ai:
+  provider: "openai"
+  openai:
+    api_key: "sk-xxxxxxxxxxxxxxxxxxxx"
+    model: "gpt-4o"
+    base_url: "https://api.example.com/v1"
+
+review:
+  max_diff_lines: 5000
+  language: "zh"
+  ignore_patterns:
+    - "*.lock"
+    - "*.sum"
+    - "vendor/*"
+    - "node_modules/*"
+    - "*.min.js"
+    - "*.min.css"
+
+notify:
+  dingtalk:
+    enabled: false
+    webhook_url: "https://oapi.dingtalk.com/robot/send?access_token=xxx"
+    secret: "SECxxxxxxxx"
+  wecom:
+    enabled: false
+    webhook_url: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx"
+
+storage:
+  type: "mysql"
+  dsn: "user:pass@tcp(127.0.0.1:3306)/ai_review?charset=utf8mb4"

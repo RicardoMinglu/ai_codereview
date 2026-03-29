@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Review: {{.Report.RepoFullName}} - {{slice .Report.CommitSHA 0 8}}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #333; }
+        .container { max-width: 1000px; margin: 0 auto; padding: 20px; }
+        header { background: #1a1a2e; color: #fff; padding: 20px 0; margin-bottom: 24px; }
+        header .container { display: flex; justify-content: space-between; align-items: center; }
+        header h1 { font-size: 1.3rem; }
+        header a { color: rgba(255,255,255,0.8); text-decoration: none; }
+        header a:hover { color: #fff; }
+
+        .meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 24px; }
+        .meta-card { background: #fff; padding: 16px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .meta-label { font-size: 0.75rem; color: #999; text-transform: uppercase; margin-bottom: 4px; }
+        .meta-value { font-size: 0.95rem; font-weight: 500; }
+
+        .score-card { background: #fff; padding: 24px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); text-align: center; margin-bottom: 24px; }
+        .score-big { font-size: 4rem; font-weight: bold; }
+        .score-label { font-size: 0.9rem; color: #666; margin-top: 4px; }
+
+        .summary { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 24px; }
+        .summary h2 { font-size: 1.1rem; margin-bottom: 12px; }
+        .summary p { line-height: 1.6; color: #555; }
+
+        .issues { margin-bottom: 24px; }
+        .issues h2 { font-size: 1.1rem; margin-bottom: 12px; }
+        .issue { background: #fff; padding: 16px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 8px; border-left: 4px solid #ddd; }
+        .issue.critical { border-left-color: #ef4444; }
+        .issue.warning { border-left-color: #eab308; }
+        .issue.info { border-left-color: #3b82f6; }
+        .issue.suggestion { border-left-color: #22c55e; }
+
+        .issue-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .issue-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; }
+        .issue-badge.critical { background: #fef2f2; color: #ef4444; }
+        .issue-badge.warning { background: #fefce8; color: #ca8a04; }
+        .issue-badge.info { background: #eff6ff; color: #3b82f6; }
+        .issue-badge.suggestion { background: #f0fdf4; color: #22c55e; }
+        .issue-category { font-size: 0.8rem; color: #999; }
+        .issue-file { font-family: monospace; font-size: 0.85rem; color: #666; margin-bottom: 6px; }
+        .issue-message { line-height: 1.5; }
+        .issue-suggest { margin-top: 8px; padding: 10px; background: #f8fafc; border-radius: 4px; font-size: 0.9rem; color: #555; }
+        .issue-suggest strong { color: #333; }
+
+        .no-issues { text-align: center; padding: 40px; color: #22c55e; font-size: 1.1rem; }
+
+        .counts { display: flex; gap: 12px; justify-content: center; margin: 12px 0; flex-wrap: wrap; }
+        .count-badge { padding: 4px 12px; border-radius: 20px; font-size: 0.85rem; font-weight: 500; }
+        .count-critical { background: #fef2f2; color: #ef4444; }
+        .count-warning { background: #fefce8; color: #ca8a04; }
+        .count-info { background: #eff6ff; color: #3b82f6; }
+        .count-suggestion { background: #f0fdf4; color: #22c55e; }
+
+        .footer { text-align: center; padding: 20px; color: #999; font-size: 0.85rem; }
+        .status-banner { padding: 20px; border-radius: 8px; margin-bottom: 24px; }
+        .status-banner.failed { background: #fee2e2; color: #991b1b; }
+        .status-banner.pending { background: #fef3c7; color: #92400e; }
+        .retry-btn { padding: 8px 20px; background: #1a1a2e; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 0.9rem; }
+        .retry-btn.secondary { background: #64748b; }
+        .retry-btn:hover { opacity: 0.9; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <a href="/">&larr; Back to list</a>
+            <h1>{{.Report.RepoFullName}}</h1>
+        </div>
+    </header>
+    <div class="container">
+        {{$s := or .Report.Status "success"}}
+        {{if orBool (eq $s "failed") (eq $s "pending")}}
+        <div class="status-banner {{$s}}">
+            {{if eq $s "failed"}}
+            <p><strong>评审失败</strong>{{if .Report.ErrorMsg}}: {{.Report.ErrorMsg}}{{end}}</p>
+            {{else}}
+            <p><strong>评审处理中...</strong></p>
+            {{end}}
+            <form method="post" action="/report/{{.Report.ID}}/retry" style="margin-top:12px">
+                <button type="submit" class="retry-btn">再次评审</button>
+            </form>
+        </div>
+        {{end}}
+        {{if eq $s "success"}}
+        <div style="margin-bottom:16px">
+            <form method="post" action="/report/{{.Report.ID}}/retry" style="display:inline">
+                <button type="submit" class="retry-btn secondary">再次评审</button>
+            </form>
+        </div>
+        {{end}}
+
+        <div class="meta">
+            <div class="meta-card">
+                <div class="meta-label">Event</div>
+                <div class="meta-value">{{.Report.EventType}} / {{.Report.Ref}}</div>
+            </div>
+            <div class="meta-card">
+                <div class="meta-label">Author</div>
+                <div class="meta-value">{{.Report.Author}}</div>
+            </div>
+            <div class="meta-card">
+                <div class="meta-label">Commit</div>
+                <div class="meta-value"><a href="{{.Report.HTMLURL}}" target="_blank">{{slice .Report.CommitSHA 0 8}}</a></div>
+            </div>
+            <div class="meta-card">
+                <div class="meta-label">Changes</div>
+                <div class="meta-value">{{.Report.FilesNum}} files, {{.Report.LinesNum}} lines</div>
+            </div>
+            <div class="meta-card">
+                <div class="meta-label">AI Model</div>
+                <div class="meta-value">{{.Report.AIModel}}</div>
+            </div>
+            <div class="meta-card">
+                <div class="meta-label">Duration</div>
+                <div class="meta-value">{{printf "%.1f" .Report.Duration}}s</div>
+            </div>
+        </div>
+
+        {{if eq $s "success"}}
+        <div class="score-card">
+            <div class="score-big" style="color:{{scoreColor .Report.Score}}">{{.Report.Score}}</div>
+            <div class="score-label">Code Quality Score</div>
+            {{with .Report.SeverityCounts}}
+            <div class="counts">
+                {{if .Critical}}<span class="count-badge count-critical">{{.Critical}} Critical</span>{{end}}
+                {{if .Warning}}<span class="count-badge count-warning">{{.Warning}} Warning</span>{{end}}
+                {{if .Info}}<span class="count-badge count-info">{{.Info}} Info</span>{{end}}
+                {{if .Suggestion}}<span class="count-badge count-suggestion">{{.Suggestion}} Suggestion</span>{{end}}
+            </div>
+            {{end}}
+        </div>
+
+        <div class="summary">
+            <h2>Summary</h2>
+            <p>{{.Report.Summary}}</p>
+        </div>
+
+        <div class="issues">
+            <h2>Issues ({{len .Report.Issues}})</h2>
+            {{if .Report.Issues}}
+                {{range .Report.Issues}}
+                <div class="issue {{.Severity}}">
+                    <div class="issue-header">
+                        <span class="issue-badge {{.Severity}}">{{.Severity}}</span>
+                        <span class="issue-category">{{.Category}}</span>
+                    </div>
+                    <div class="issue-file">{{.File}}{{if .Line}}:{{.Line}}{{end}}</div>
+                    <div class="issue-message">{{.Message}}</div>
+                    {{if .Suggest}}
+                    <div class="issue-suggest"><strong>Suggestion:</strong> {{.Suggest}}</div>
+                    {{end}}
+                </div>
+                {{end}}
+            {{else}}
+                <div class="no-issues">No issues found. Great job!</div>
+            {{end}}
+        </div>
+        {{end}}
+
+        <div class="footer">
+            Reviewed at {{.Report.CreatedAt.Format "2006-01-02 15:04:05"}} | Commit: {{.Report.CommitMsg}}
+        </div>
+    </div>
+</body>
+</html>

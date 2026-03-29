@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 安全漏洞（私密）
+    url: https://github.com/RicardoMinglu/ai_codereview/security
+    about: 按 SECURITY.md 报告，勿在公开 Issue 粘贴利用细节或密钥

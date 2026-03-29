@@ -47,7 +47,10 @@
 │   └── web/                # Web 页面与 HTTP 接口
 ├── docs/                   # 详细文档
 │   ├── images/             # README 用界面截图（见「界面预览」）
-│   └── mysql/init.sql      # 可选 MySQL 表结构（服务也会自动迁移）
+│   ├── mysql/init.sql      # 可选 MySQL 表结构（服务也会自动迁移）
+│   └── examples/           # 不参与编译的演示片段（如触发评审联调）
+├── CONTRIBUTING.md         # 贡献指南
+├── SECURITY.md             # 漏洞反馈与安全说明
 ├── config.example.yaml     # 配置示例
 └── Makefile                # 常用开发命令
 ```
@@ -154,6 +157,8 @@ ai:
 - [实现文档](docs/IMPLEMENTATION.md)：架构、数据流、模块实现
 - [GitHub 接入指南](docs/GITHUB_INTEGRATION.md)：Webhook 与权限配置
 - [需求文档](docs/REQUIREMENTS.md)：功能与非功能需求
+- [贡献指南](CONTRIBUTING.md)
+- [安全策略](SECURITY.md)（**漏洞请勿在公开 Issue 讨论细节**）
 
 ## 运行依赖
 
@@ -171,14 +176,18 @@ ai:
 2. 提交改动并补充必要测试
 3. 向 **`master`** 发起 PR，描述动机、改动点和验证方式
 
-如果是较大改动，建议先开 Issue 讨论设计方向。
+如果是较大改动，建议先开 Issue 讨论设计方向。细则见 **[CONTRIBUTING.md](CONTRIBUTING.md)**。
 
 ## 安全说明
 
-- 不要将真实密钥提交到仓库（`config.yaml`、含密钥的本地配置文件勿入库）
-- 建议使用环境隔离或密钥管理服务托管令牌
-- 生产环境务必配置 **`github.webhook_secret`**，校验 Webhook 签名
-- 报告 **Web 界面无登录**：勿对公网裸奔；建议仅内网访问，或通过反向代理做 **HTTPS + 鉴权**（如 Basic、IP 允许列表等）
+
+> **暴露面与敏感等级**：服务会处理 Git 变更与 AI 评审结果。**HTTP 报告列表、详情、再次评审接口均未内置账号体系**；Webhook 仅在配置了 `github.webhook_secret` 时校验签名。若把管理端口或报告页 **无防护地暴露到公网**，存在泄露评审内容、滥用接口或未签名 Webhook 被伪造等风险——部署场景应视为 **高敏感**，默认按 **内网或受控网络** 设计。
+
+- **生产环境**：务必配置 **`github.webhook_secret`**，并在 GitHub Webhook 中启用相同密钥。
+- **报告 Web UI**：仅建议在 **内网 / VPN** 使用，或通过 **反向代理** 提供 **HTTPS**，并叠加 **鉴权**（HTTP Basic、OIDC、仅有权 IP、零信任接入等）与 **限流**。
+- **不要将真实密钥提交到仓库**（`config.yaml`、`config.trigger.yaml` 等请勿入库；仓库已 `.gitignore` 常见本地配置）。
+- 建议使用密钥管理或环境隔离保管 GitHub Token、AI Key、钉钉/企微 Webhook。
+- **安全问题**请按 **[SECURITY.md](SECURITY.md)** 私密反馈，勿在公开 Issue 贴 PoC 或密钥。
 
 ## License
 

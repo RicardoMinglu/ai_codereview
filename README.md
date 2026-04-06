@@ -6,22 +6,28 @@
 [![Stars](https://img.shields.io/github/stars/ricardominglu/ai_codereview?style=social)](https://github.com/RicardoMinglu/ai_codereview/stargazers)
 
 基于大语言模型的自动化代码评审服务。  
-当 GitHub 仓库发生 `push` 或 `pull_request` 事件时，系统会自动获取代码变更、调用 AI 进行评审，并生成结构化报告与通知。
+当 GitHub 仓库发生 **`push`（仅分支，不含 tag）** 或 **`pull_request`** 事件时，系统拉取代码变更、调用 AI 评审，并生成结构化报告与可选通知。
 
-适合团队在 CI/CD 之外补充“语义层”的代码质量反馈，也适合个人项目做持续质量守护。
+## 配置架构（按仓库表驱动）
+
+- **`config.yaml` 只负责**：`server`（端口、对外 `base_url`）、**`storage.dsn`（MySQL）**、`ai`（模型与 API Key）。**不**在本文件里配置 GitHub Token、Webhook、评审或通知。
+- **仓库与凭据**：自设计起即为**多仓库**。每个 `owner/repo` 在 MySQL 表 **`github_projects`** 中占一行（推荐 **`/admin/projects`** Web 管理页），至少配置 **GitHub Token**；可选 Webhook Secret、`push_branches`、`review_json`、`notify_json` 等。
+- **存储**：**仅 MySQL**；`storage.type` 非 `mysql`（或未配 `dsn`）时无法启动。
+- **Webhook**：只处理**已在表中登记且启用**的仓库；未登记仓库的事件会被忽略。
 
 ## 功能特性
 
-- 自动评审：监听 GitHub Webhook，按 `push` / `PR` 触发评审
-- 结构化结果：生成 0-100 分、问题列表、改进建议
-- 多模型支持：Claude、OpenAI、Gemini，支持 OpenAI 兼容 API
-- 多存储支持：SQLite、MySQL、PostgreSQL
-- 多通知渠道：钉钉、企业微信、自定义 Webhook（Slack、飞书等）
-- 可视化报告：Web 页面查看评审列表、详情、仓库筛选
+- **分支 `push`** 与 **`pull_request`**（`opened` / `synchronize`）
+- **不评审 tag push**（`refs/tags/*`）
+- **Push 分支白名单**：列 **`push_branches`**（管理页「监听 Push 的分支」）；非空则仅这些分支触发 push 评审；**PR 不受此字段限制**
+- 结构化结果：0–100 分、问题列表、改进建议
+- 模型：Claude、OpenAI、Gemini；OpenAI 兼容中转（`base_url`）
+- 通知：钉钉 / 企业微信 / 自定义 Webhook 等在 **`notify_json`** 中配置（JSON 键与代码一致，如 `webhook_url`）
+- Web UI：列表 / 详情 / **`/admin/projects`**；**`/setup`** 重定向到项目配置页
 
 ## 界面预览
 
-截图放在仓库内目录 [`docs/images/`](docs/images/)，文件名与下方引用一致即可（也可改成 `.jpg`，同步改 README 里后缀）。
+截图目录：[`docs/images/`](docs/images/)。
 
 | 说明 | 文件 |
 |------|------|
@@ -35,94 +41,90 @@
 
 ![钉钉通知](docs/images/dingtalk.png)
 
-## 项目结构
+## 项目结构（节选）
 
 ```text
-.
-├── cmd/                    # 程序入口
+├── cmd/server/
 ├── internal/
-│   ├── webhook/            # GitHub 事件处理
-│   ├── ai/                 # 大模型调用与提示词
-│   ├── report/             # 评审结果存储与查询
-│   └── web/                # Web 页面与 HTTP 接口
-├── docs/                   # 详细文档
-│   ├── images/             # README 用界面截图（见「界面预览」）
-│   ├── mysql/init.sql      # 可选 MySQL 表结构（服务也会自动迁移）
-│   └── examples/           # 不参与编译的演示片段（如触发评审联调）
-├── CONTRIBUTING.md         # 贡献指南
-├── SECURITY.md             # 漏洞反馈与安全说明
-├── config.example.yaml     # 配置示例
-└── Makefile                # 常用开发命令
+│   ├── webhook/      # GitHub 事件
+│   ├── ai/
+│   ├── project/      # 分支策略、表配置模型
+│   ├── report/       # MySQL：reports + github_projects
+│   └── web/
+├── docs/mysql/
+│   ├── init.sql                    # 建库脚本（部署前执行）
+│   └── alter_push_branches.sql     # 老库补列（按需）
+├── config.example.yaml
+└── Makefile
 ```
 
 ## 快速开始
 
-### 1) 克隆仓库
+### 1) 克隆
 
 ```bash
 git clone https://github.com/RicardoMinglu/ai_codereview.git
 cd ai_codereview
 ```
 
-Go 模块路径：`github.com/RicardoMinglu/ai_codereview`（与仓库一致，便于 `go install` / 依赖引用）。
-
-### 2) 初始化配置
+### 2) `config.yaml`
 
 ```bash
 cp config.example.yaml config.yaml
 ```
 
-编辑 `config.yaml`，至少填写：
-- `github.token`
-- `ai.provider`
-- 对应模型供应商的 `api_key`
+填写 **`server`**、**`storage.dsn`**、**`ai`**。其中 **`storage.type` 固定为 `mysql`**。
 
-### 3) 启动服务
+### 3) MySQL 表
+
+```bash
+mysql -h HOST -u USER -p YOUR_DB < docs/mysql/init.sql
+```
+
+已有库缺 `push_branches` 时：
+
+```bash
+mysql ... < docs/mysql/alter_push_branches.sql
+```
+
+### 4) 启动
 
 ```bash
 make run
-# 或
-make build && ./ai-code-review -config config.yaml
 ```
 
-### 4) 配置 GitHub Webhook
+日志会打印评审列表、项目配置、Webhook 等 URL。若 `github_projects` 为空会有初始化提示。
 
-- URL：`https://<your-domain>/webhook/github`
-- 事件：`Pushes`、`Pull requests`
-- Content type：`application/json`
+### 5) 登记仓库
 
-本地调试建议使用 [ngrok](https://ngrok.com/) 暴露本地地址。
+打开 **`http://<host>:<port>/admin/projects`**（或 **`/setup`**），为每个 `owner/repo` 配置至少 **GitHub Token**；按需填写 Webhook Secret、Push 分支、**`review_json`** / **`notify_json`**。
 
-## 配置示例
+### 6) GitHub Webhook
 
-最小可用配置：
+- URL：`https://<公网或 ngrok>/webhook/github`
+- 事件：**Pushes**、**Pull requests**，`application/json`
+
+**`server.base_url`** 请与报告链接、钉钉等通知中的域名一致（常为 ngrok 或正式域名）。
+
+## `config.yaml` 示例
 
 ```yaml
-github:
-  token: "ghp_xxx"
+server:
+  port: 8078
+  base_url: "http://localhost:8078"
 
 ai:
-  provider: "openai" # claude | openai | gemini
+  provider: "openai"
   openai:
     api_key: "sk-xxx"
     model: "gpt-4o"
+
+storage:
+  type: "mysql"
+  dsn: "user:pass@tcp(127.0.0.1:3306)/ai_review?charset=utf8mb4"
 ```
 
-### 数据库
-
-| 类型 | 配置 |
-|------|------|
-| MySQL（程序与 `config.example.yaml` 默认） | `storage.type: mysql`，`storage.dsn: user:pass@tcp(host:3306)/db` |
-| SQLite | `storage.type: sqlite`，`storage.path: ./data/reviews.db` |
-| PostgreSQL | `storage.type: pgsql`，`storage.dsn: postgres://user:pass@host:5432/db` |
-
-### 通知
-
-- 钉钉：`notify.dingtalk.enabled: true`，并填写 `webhook_url`、`secret`
-- 企业微信：`notify.wecom.enabled: true`，并填写 `webhook_url`
-- 第三方 Webhook：配置 `notify.webhooks` 列表
-
-### OpenAI 兼容 API（中转站）
+OpenAI 兼容中转：
 
 ```yaml
 ai:
@@ -133,61 +135,41 @@ ai:
     base_url: "https://api.example.com/v1"
 ```
 
+## 通知 `notify_json` 要点
+
+- 使用 **JSON**，键名与程序一致（如 `dingtalk.webhook_url`，勿依赖仅 YAML 的字段名）。
+- 钉钉仅关键词、未开「加签」时 **`secret` 留空**；开加签则填 **`SEC…`**。
+
 ## 常用命令
 
 | 命令 | 说明 |
 |------|------|
-| `make build` | 编译 |
-| `make run` | 编译并运行 |
-| `make test` | 运行测试 |
-| `make docker-build` | 构建 Docker 镜像 |
-| `make docker-run` | 运行 Docker 容器（映射 `8078`，与默认 `server.port` 一致） |
-| `make init-config` | 从示例创建 `config.yaml` |
-| `make help` | 显示帮助 |
+| `make build` / `make run` | 编译 / 运行 |
+| `make test` | 测试 |
+| `make docker-build` / `make docker-run` | 镜像 / 容器（需自备 MySQL 与 `config.yaml`） |
+| `make init-config` | 生成 `config.yaml` |
+| `make help` | 帮助 |
 
-## 访问地址
+## 访问地址（端口以配置为准）
 
-- 报告列表：`http://localhost:8078/`
-- 报告详情：`http://localhost:8078/report/{id}`
-- 健康检查：`http://localhost:8078/health`
+- `/` 评审列表，`/report/{id}` 详情，`/admin/projects` 项目表， `/setup` 跳转管理，`POST /webhook/github`，`/health`
 
-## 文档
+## 文档与协作
 
-- [使用文档](docs/USAGE.md)：详细配置与使用说明
-- [实现文档](docs/IMPLEMENTATION.md)：架构、数据流、模块实现
-- [GitHub 接入指南](docs/GITHUB_INTEGRATION.md)：Webhook 与权限配置
-- [需求文档](docs/REQUIREMENTS.md)：功能与非功能需求
-- [贡献指南](CONTRIBUTING.md)
-- [安全策略](SECURITY.md)（**漏洞请勿在公开 Issue 讨论细节**）
+- [使用文档](使用文档.md)、[docs/USAGE.md](docs/USAGE.md)（若与当前行为不一致，以本 README 与代码为准）
+- [CONTRIBUTING.md](CONTRIBUTING.md)、[SECURITY.md](SECURITY.md)
+
+默认分支 **`master`**，PR 请指向该分支。
 
 ## 运行依赖
 
 - Go 1.25+
-- GitHub Personal Access Token（`repo` 权限）
-- 至少一个 AI API Key（Claude / OpenAI / Gemini）
-
-## 开源协作
-
-默认分支为 **`master`**（与历史较长的 `main` 无继承关系时，可在 GitHub 设置中将默认分支改为 `master`，并按需删除远端 `main`）。
-
-欢迎提交 Issue 和 Pull Request。建议流程：
-
-1. Fork 本仓库并基于 **`master`** 创建功能分支
-2. 提交改动并补充必要测试
-3. 向 **`master`** 发起 PR，描述动机、改动点和验证方式
-
-如果是较大改动，建议先开 Issue 讨论设计方向。细则见 **[CONTRIBUTING.md](CONTRIBUTING.md)**。
+- **MySQL** + 已执行 **`docs/mysql/init.sql`**
+- 表内各仓库 **GitHub Token**（`repo`）与 **`config.yaml` 内 AI Key**
 
 ## 安全说明
 
-
-> **暴露面与敏感等级**：服务会处理 Git 变更与 AI 评审结果。**HTTP 报告列表、详情、再次评审接口均未内置账号体系**；Webhook 仅在配置了 `github.webhook_secret` 时校验签名。若把管理端口或报告页 **无防护地暴露到公网**，存在泄露评审内容、滥用接口或未签名 Webhook 被伪造等风险——部署场景应视为 **高敏感**，默认按 **内网或受控网络** 设计。
-
-- **生产环境**：务必配置 **`github.webhook_secret`**，并在 GitHub Webhook 中启用相同密钥。
-- **报告 Web UI**：仅建议在 **内网 / VPN** 使用，或通过 **反向代理** 提供 **HTTPS**，并叠加 **鉴权**（HTTP Basic、OIDC、仅有权 IP、零信任接入等）与 **限流**。
-- **不要将真实密钥提交到仓库**（`config.yaml`、`config.trigger.yaml` 等请勿入库；仓库已 `.gitignore` 常见本地配置）。
-- 建议使用密钥管理或环境隔离保管 GitHub Token、AI Key、钉钉/企微 Webhook。
-- **安全问题**请按 **[SECURITY.md](SECURITY.md)** 私密反馈，勿在公开 Issue 贴 PoC 或密钥。
+管理页与报告页默认**无登录**；Webhook 验签依赖表内 **`webhook_secret`** 与 GitHub 一致。生产环境请 HTTPS、鉴权、限流；密钥勿入库。详见 **[SECURITY.md](SECURITY.md)**。
 
 ## License
 

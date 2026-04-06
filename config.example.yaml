@@ -1,56 +1,24 @@
+# 仅需保留：服务、AI、MySQL。GitHub Token / Webhook 密钥 / 评审与通知均在 Web「项目配置」写入表 github_projects，
+# 或通过 SQL 写入；下述 github、review、notify 段若仍存在会被解析但运行时不再使用（可整段删除）。
+
 server:
   port: 8078
-  # 对外可访问的根地址，用于通知里的报告链接等（本地可用 http://localhost:8078；公网/Webhook 填 https 域名或 ngrok）
   base_url: "http://localhost:8078"
 
-github:
-  token: "ghp_xxxxxxxxxxxxxxxxxxxx"
-  webhook_secret: "your-webhook-secret"
-
 ai:
-  provider: "claude"   # claude | openai | gemini
+  provider: "claude"
   claude:
     api_key: "sk-ant-xxxxxxxxxxxxxxxxxxxx"
     model: "claude-sonnet-4-6"
   openai:
     api_key: "sk-xxxxxxxxxxxxxxxxxxxx"
     model: "gpt-4o"
-    # base_url: "https://api.xxx.com/v1"   # 可选，OpenAI 兼容中转（末尾一般为 /v1）
   gemini:
     api_key: "AIzaSyxxxxxxxxxxxxxxxxxxxxxxxx"
     model: "gemini-2.5-flash"
 
-review:
-  max_diff_lines: 5000
-  language: "zh"        # zh | en
-  ignore_patterns:
-    - "*.lock"
-    - "*.sum"
-    - "vendor/*"
-    - "node_modules/*"
-    - "*.min.js"
-    - "*.min.css"
-
-notify:
-  dingtalk:
-    enabled: false
-    webhook_url: "https://oapi.dingtalk.com/robot/send?access_token=xxx"
-    secret: "SECxxxxxxxx"
-  wecom:
-    enabled: false
-    webhook_url: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx"
-  # 第三方平台 Webhook（Slack、飞书、自定义等）
-  webhooks:
-    # - enabled: true
-    #   name: "slack"
-    #   url: "https://hooks.slack.com/services/xxx"
-    #   type: "custom"
-
 storage:
-  type: "mysql"    # sqlite | mysql | pgsql
+  type: "mysql"
   dsn: "user:pass@tcp(127.0.0.1:3306)/ai_review?charset=utf8mb4"
-  # SQLite 示例：设置 type: sqlite 并配置 path
-  # path: "./data/reviews.db"
-  # PostgreSQL 示例：
-  # type: "pgsql"
-  # dsn: "postgres://user:pass@localhost:5432/ai_review?sslmode=disable"
+  # 启动后若表为空，日志与首页会提示打开 /admin/projects 或 /setup。
+  # notify_json / review_json 结构见历史文档或管理页示例；默认评审基数由内建 DefaultReviewConfig 提供，review_json 只覆盖所写字段。

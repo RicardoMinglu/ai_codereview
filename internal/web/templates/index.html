@@ -42,13 +42,25 @@
         .error-msg { font-size: 0.75rem; color: #991b1b; }
         .retry-btn { padding: 6px 12px; background: #64748b; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 0.8rem; white-space: nowrap; }
         .retry-btn:hover { opacity: 0.92; }
+        .nav { display: flex; gap: 16px; align-items: center; }
+        .nav a { color: rgba(255,255,255,0.85); text-decoration: none; font-size: 0.9rem; }
+        .nav a:hover { color: #fff; }
+        .setup-banner { padding: 14px 18px; border-radius: 8px; margin-bottom: 20px; background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
+        .setup-banner a { font-weight: 600; color: #b45309; }
     </style>
 </head>
 <body>
     <header>
         <div class="container">
-            <h1>AI Code Review</h1>
-            <div class="stats">
+            <div style="display:flex;justify-content:space-between;align-items:center;width:100%;flex-wrap:wrap;gap:12px">
+                <h1>AI Code Review</h1>
+                <nav class="nav">
+                    <a href="/">评审列表</a>
+                    <a href="/admin/projects">项目配置</a>
+                    <a href="/setup">配置引导</a>
+                </nav>
+            </div>
+            <div class="stats" style="margin-top:12px">
                 <div class="stat">
                     <div class="stat-num">{{.Total}}</div>
                     <div class="stat-label">Total Reviews</div>
@@ -57,6 +69,11 @@
         </div>
     </header>
     <div class="container">
+        {{if .ShowSetupGuide}}
+        <div class="setup-banner">
+            还未在数据库登记任何 GitHub 仓库，Webhook 不会执行评审。请先到 <a href="/admin/projects">项目配置</a> 添加仓库并填写 Token；也可打开 <a href="/setup">/setup</a> 跳转同一页面。
+        </div>
+        {{end}}
         <form class="filter" method="get" action="/">
             <input type="text" name="repo" placeholder="Filter by repository (e.g. owner/repo)" value="{{.Repo}}">
             <button type="submit">Filter</button>
@@ -122,8 +139,8 @@
 
         {{else}}
         <div class="empty">
-            <h2>No reviews yet</h2>
-            <p>Configure a GitHub Webhook to start receiving code reviews.</p>
+            <h2>暂无评审记录</h2>
+            <p>请先在 <a href="/admin/projects">项目配置</a> 登记仓库；再在 GitHub 仓库设置 Webhook，指向本服务的 <code>/webhook/github</code>。</p>
         </div>
         {{end}}
     </div>

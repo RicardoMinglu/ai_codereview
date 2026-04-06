@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -15,22 +17,26 @@ import (
 	"github.com/RicardoMinglu/ai_codereview/internal/config"
 	ghclient "github.com/RicardoMinglu/ai_codereview/internal/github"
 	"github.com/RicardoMinglu/ai_codereview/internal/notify"
+	"github.com/RicardoMinglu/ai_codereview/internal/project"
 	"github.com/RicardoMinglu/ai_codereview/internal/report"
 	"github.com/RicardoMinglu/ai_codereview/internal/reviewer"
 )
 
 type Handler struct {
 	cfg      *config.Config
-	ghClient *ghclient.Client
+	proj     project.Reader
 	reviewer *reviewer.Reviewer
 	store    report.Store
 	notifier notify.Notifier
 }
 
-func NewHandler(cfg *config.Config, rev *reviewer.Reviewer, store report.Store, notifier notify.Notifier) *Handler {
+func NewHandler(cfg *config.Config, proj project.Reader, rev *reviewer.Reviewer, store report.Store, notifier notify.Notifier) *Handler {
+	if proj == nil {
+		proj = project.NoopReader{}
+	}
 	return &Handler{
 		cfg:      cfg,
-		ghClient: ghclient.NewClient(&cfg.GitHub),
+		proj:     proj,
 		reviewer: rev,
 		store:    store,
 		notifier: notifier,
@@ -44,16 +50,31 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify signature
-	if h.cfg.GitHub.WebhookSecret != "" {
+	eventType := r.Header.Get("X-GitHub-Event")
+	repoPeek := peekRepoFullName(eventType, body)
+	verifyCtx := r.Context()
+	projRow, err := h.proj.GetProjectRow(verifyCtx, repoPeek)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		log.Printf("get project row for verify: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		projRow = nil
+	}
+
+	webhookSecret := ""
+	if projRow != nil && projRow.WebhookSecret != "" {
+		webhookSecret = projRow.WebhookSecret
+	}
+
+	if webhookSecret != "" {
 		sig := r.Header.Get("X-Hub-Signature-256")
-		if !verifySignature(body, sig, h.cfg.GitHub.WebhookSecret) {
+		if !verifySignature(body, sig, webhookSecret) {
 			http.Error(w, "invalid signature", http.StatusUnauthorized)
 			return
 		}
 	}
-
-	eventType := r.Header.Get("X-GitHub-Event")
 
 	// Return 200 immediately, process async
 	w.WriteHeader(http.StatusOK)
@@ -90,7 +111,22 @@ func (h *Handler) handlePush(body []byte) {
 		return
 	}
 
+	// 仅评审分支 push，忽略 tag push
+	if strings.HasPrefix(event.Ref, "refs/tags/") {
+		return
+	}
+
 	repoFullName := event.Repository.FullName
+	ctx := context.Background()
+	rec, ghClient, rev, notifier, ok := h.resolveProjectStack(ctx, repoFullName)
+	if !ok {
+		return
+	}
+	if !project.PushAllowed(rec, event.Ref) {
+		log.Printf("skip push: ref %q not in push_branches allowlist %q for %s", event.Ref, rec.PushBranches, repoFullName)
+		return
+	}
+
 	owner, repo, err := ghclient.ParseRepoFullName(repoFullName)
 	if err != nil {
 		log.Printf("parse repo name error: %v", err)
@@ -105,7 +141,6 @@ func (h *Handler) handlePush(body []byte) {
 		ref = strings.TrimPrefix(ref, "refs/heads/")
 	}
 
-	ctx := context.Background()
 	rpt := &report.ReviewReport{
 		RepoFullName: repoFullName,
 		EventType:    "push",
@@ -123,7 +158,7 @@ func (h *Handler) handlePush(body []byte) {
 		return
 	}
 
-	diff, err := h.ghClient.GetCommitDiff(ctx, owner, repo, headCommit.ID)
+	diff, err := ghClient.GetCommitDiff(ctx, owner, repo, headCommit.ID)
 	if err != nil {
 		log.Printf("get commit diff error: %v", err)
 		rpt.Status, rpt.ErrorMsg = "failed", err.Error()
@@ -142,7 +177,7 @@ func (h *Handler) handlePush(body []byte) {
 		Diff:         diff,
 	}
 
-	h.runReview(ctx, req, rpt)
+	h.runReview(ctx, req, rpt, rev, notifier)
 }
 
 func (h *Handler) handlePullRequest(body []byte) {
@@ -158,6 +193,12 @@ func (h *Handler) handlePullRequest(body []byte) {
 	}
 
 	repoFullName := event.Repository.FullName
+	ctx := context.Background()
+	_, ghClient, rev, notifier, ok := h.resolveProjectStack(ctx, repoFullName)
+	if !ok {
+		return
+	}
+
 	owner, repo, err := ghclient.ParseRepoFullName(repoFullName)
 	if err != nil {
 		log.Printf("parse repo name error: %v", err)
@@ -167,7 +208,6 @@ func (h *Handler) handlePullRequest(body []byte) {
 	pr := event.PullRequest
 	log.Printf("processing PR #%d on %s: %s by %s", pr.Number, repoFullName, pr.Title, pr.User.Login)
 
-	ctx := context.Background()
 	rpt := &report.ReviewReport{
 		RepoFullName: repoFullName,
 		EventType:    "pull_request",
@@ -185,7 +225,7 @@ func (h *Handler) handlePullRequest(body []byte) {
 		return
 	}
 
-	diff, err := h.ghClient.GetPRDiff(ctx, owner, repo, pr.Number)
+	diff, err := ghClient.GetPRDiff(ctx, owner, repo, pr.Number)
 	if err != nil {
 		log.Printf("get PR diff error: %v", err)
 		rpt.Status, rpt.ErrorMsg = "failed", err.Error()
@@ -204,7 +244,7 @@ func (h *Handler) handlePullRequest(body []byte) {
 		Diff:         diff,
 	}
 
-	h.runReview(ctx, req, rpt)
+	h.runReview(ctx, req, rpt, rev, notifier)
 }
 
 // RetryReview 对指定报告再次执行评审
@@ -213,6 +253,10 @@ func (h *Handler) RetryReview(ctx context.Context, reportID string) error {
 	if err != nil {
 		return err
 	}
+	_, ghClient, rev, notifier, ok := h.resolveProjectStack(ctx, rpt.RepoFullName)
+	if !ok {
+		return fmt.Errorf("repo %s is not enabled for review", rpt.RepoFullName)
+	}
 	owner, repo, err := ghclient.ParseRepoFullName(rpt.RepoFullName)
 	if err != nil {
 		return fmt.Errorf("parse repo: %w", err)
@@ -220,13 +264,13 @@ func (h *Handler) RetryReview(ctx context.Context, reportID string) error {
 
 	var diff *ghclient.DiffResult
 	if rpt.EventType == "push" {
-		diff, err = h.ghClient.GetCommitDiff(ctx, owner, repo, rpt.CommitSHA)
+		diff, err = ghClient.GetCommitDiff(ctx, owner, repo, rpt.CommitSHA)
 	} else {
 		var prNum int
 		if _, err := fmt.Sscanf(rpt.Ref, "#%d", &prNum); err != nil {
 			return fmt.Errorf("parse PR number from ref %q: %w", rpt.Ref, err)
 		}
-		diff, err = h.ghClient.GetPRDiff(ctx, owner, repo, prNum)
+		diff, err = ghClient.GetPRDiff(ctx, owner, repo, prNum)
 	}
 	if err != nil {
 		return fmt.Errorf("get diff: %w", err)
@@ -247,12 +291,18 @@ func (h *Handler) RetryReview(ctx context.Context, reportID string) error {
 	rpt.ErrorMsg = ""
 	_ = h.store.Update(ctx, rpt)
 
-	h.runReview(ctx, req, rpt)
+	h.runReview(ctx, req, rpt, rev, notifier)
 	return nil
 }
 
-func (h *Handler) runReview(ctx context.Context, req *reviewer.ReviewRequest, rpt *report.ReviewReport) {
-	result, err := h.reviewer.Review(ctx, req)
+func (h *Handler) runReview(ctx context.Context, req *reviewer.ReviewRequest, rpt *report.ReviewReport, rev *reviewer.Reviewer, notifier notify.Notifier) {
+	if rev == nil {
+		rev = h.reviewer
+	}
+	if notifier == nil {
+		notifier = h.notifier
+	}
+	result, err := rev.Review(ctx, req)
 	if err != nil {
 		log.Printf("review error: %v", err)
 		rpt.Status, rpt.ErrorMsg = "failed", err.Error()
@@ -278,9 +328,54 @@ func (h *Handler) runReview(ctx context.Context, req *reviewer.ReviewRequest, rp
 	reportURL := fmt.Sprintf("%s/report/%s", h.cfg.Server.BaseURL, rpt.ID)
 	log.Printf("review complete for %s %s: score=%d, url=%s", rpt.RepoFullName, rpt.CommitSHA[:8], rpt.Score, reportURL)
 
-	if err := h.notifier.Send(ctx, rpt, reportURL); err != nil {
+	if err := notifier.Send(ctx, rpt, reportURL); err != nil {
 		log.Printf("notify error: %v", err)
 	}
+}
+
+// resolveProjectStack 仅从 github_projects 读取 GitHub/评审/通知等逻辑配置。
+func (h *Handler) resolveProjectStack(ctx context.Context, repoFullName string) (*project.Record, *ghclient.Client, *reviewer.Reviewer, notify.Notifier, bool) {
+	row, err := h.proj.GetProjectRow(ctx, repoFullName)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		log.Printf("get project: %v", err)
+		return nil, nil, nil, nil, false
+	}
+	var rec *project.Record
+	if err == nil {
+		rec = row
+	}
+	if rec == nil || !rec.Enabled {
+		log.Printf("skip: repo %q not in github_projects or disabled", repoFullName)
+		return nil, nil, nil, nil, false
+	}
+	if rec.GitHubToken == "" {
+		log.Printf("skip: github_projects.github_token empty for %q", repoFullName)
+		return nil, nil, nil, nil, false
+	}
+	ghClient := ghclient.NewClient(&config.GitHubConfig{Token: rec.GitHubToken})
+
+	mergedReview, merr := config.MergeReview(config.DefaultReviewConfig(), rec.ReviewJSON)
+	if merr != nil {
+		log.Printf("merge review_json: %v", merr)
+		mergedReview = config.DefaultReviewConfig()
+	}
+	rev := h.reviewer.WithConfig(&mergedReview)
+	notifier := notify.NotifierFromProjectJSON(rec.NotifyJSON)
+
+	return rec, ghClient, rev, notifier, true
+}
+
+func peekRepoFullName(_ string, body []byte) string {
+	type repoWrap struct {
+		Repository struct {
+			FullName string `json:"full_name"`
+		} `json:"repository"`
+	}
+	var ev repoWrap
+	if err := json.Unmarshal(body, &ev); err != nil {
+		return ""
+	}
+	return ev.Repository.FullName
 }
 
 func verifySignature(payload []byte, signature, secret string) bool {

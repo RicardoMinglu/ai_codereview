@@ -9,15 +9,29 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      # 与 job 同网络的 service 主机名为 mysql
+      TEST_MYSQL_DSN: root:root@tcp(mysql:3306)/ai_review_test?charset=utf8mb4
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: ai_review_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=18
+
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25"
-
-      - name: Install CGO dependencies (SQLite)
-        run: sudo apt-get update && sudo apt-get install -y gcc libc6-dev
 
       - name: Verify modules
         run: go mod verify

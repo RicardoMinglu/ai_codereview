@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"database/sql"
 	"embed"
 	"errors"
@@ -8,8 +9,10 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/RicardoMinglu/ai_codereview/internal/config"
+	"github.com/RicardoMinglu/ai_codereview/internal/project"
 	"github.com/RicardoMinglu/ai_codereview/internal/report"
 	"github.com/RicardoMinglu/ai_codereview/internal/webhook"
 )
@@ -58,11 +61,12 @@ func scoreColor(score int) string {
 type Handler struct {
 	cfg    *config.Config
 	store  report.Store
+	proj   project.Reader
 	wh     *webhook.Handler
 }
 
-func NewHandler(cfg *config.Config, store report.Store, wh *webhook.Handler) *Handler {
-	return &Handler{cfg: cfg, store: store, wh: wh}
+func NewHandler(cfg *config.Config, store report.Store, proj project.Reader, wh *webhook.Handler) *Handler {
+	return &Handler{cfg: cfg, store: store, proj: proj, wh: wh}
 }
 
 func (h *Handler) Index(w http.ResponseWriter, r *http.Request) {
@@ -88,13 +92,18 @@ func (h *Handler) Index(w http.ResponseWriter, r *http.Request) {
 
 	totalPages := (total + pageSize - 1) / pageSize
 
+	showSetup := false
+	if has, err := h.proj.AnyProjectRow(r.Context()); err == nil && !has {
+		showSetup = true
+	}
 	data := map[string]any{
-		"Reports":    reports,
-		"Repo":       repo,
-		"Page":       page,
-		"TotalPages": totalPages,
-		"Total":      total,
-		"BaseURL":    h.cfg.Server.BaseURL,
+		"Reports":        reports,
+		"Repo":           repo,
+		"Page":           page,
+		"TotalPages":     totalPages,
+		"Total":          total,
+		"BaseURL":        h.cfg.Server.BaseURL,
+		"ShowSetupGuide": showSetup,
 	}
 
 	if err := templates.ExecuteTemplate(w, "index.html", data); err != nil {
@@ -118,9 +127,14 @@ func (h *Handler) Report(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	showSetup := false
+	if has, err := h.proj.AnyProjectRow(r.Context()); err == nil && !has {
+		showSetup = true
+	}
 	data := map[string]any{
-		"Report":  rpt,
-		"BaseURL": h.cfg.Server.BaseURL,
+		"Report":         rpt,
+		"BaseURL":        h.cfg.Server.BaseURL,
+		"ShowSetupGuide": showSetup,
 	}
 
 	if err := templates.ExecuteTemplate(w, "report.html", data); err != nil {
@@ -140,10 +154,18 @@ func (h *Handler) Retry(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
-	if err := h.wh.RetryReview(r.Context(), id); err != nil {
+	// 不用 r.Context()：评审可能超过 HTTP WriteTimeout，浏览器关闭/跳转也会取消请求上下文，导致 GitHub/OpenAI 报 context canceled。
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	if err := h.wh.RetryReview(ctx, id); err != nil {
 		log.Printf("retry review error: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	http.Redirect(w, r, "/report/"+id, http.StatusSeeOther)
+}
+
+// SetupRedirect 引导至项目配置页（与启动日志中的地址一致）。
+func (h *Handler) SetupRedirect(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "/admin/projects", http.StatusSeeOther)
 }

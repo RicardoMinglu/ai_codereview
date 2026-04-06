@@ -35,6 +35,14 @@ func New(provider ai.Provider, cfg *config.ReviewConfig) *Reviewer {
 	return &Reviewer{provider: provider, cfg: cfg}
 }
 
+// WithConfig 返回共享同一 AI Provider、但使用另一套评审配置的 Reviewer（用于按仓库覆盖 review 配置）。
+func (r *Reviewer) WithConfig(cfg *config.ReviewConfig) *Reviewer {
+	if cfg == nil {
+		return r
+	}
+	return &Reviewer{provider: r.provider, cfg: cfg}
+}
+
 func (r *Reviewer) Review(ctx context.Context, req *ReviewRequest) (*report.ReviewReport, error) {
 	// Filter ignored files
 	filteredDiff := r.filterFiles(req.Diff)

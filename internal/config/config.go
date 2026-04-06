@@ -56,33 +56,32 @@ type ReviewConfig struct {
 }
 
 type NotifyConfig struct {
-	DingTalk DingTalkConfig   `yaml:"dingtalk"`
-	WeCom    WeComConfig      `yaml:"wecom"`
-	Webhooks []WebhookConfig  `yaml:"webhooks"` // 第三方平台机器人（Slack、飞书、自定义等）
+	DingTalk DingTalkConfig   `yaml:"dingtalk" json:"dingtalk"`
+	WeCom    WeComConfig      `yaml:"wecom" json:"wecom"`
+	Webhooks []WebhookConfig  `yaml:"webhooks" json:"webhooks"` // 第三方平台机器人（Slack、飞书、自定义等）
 }
 
 type WebhookConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	Name    string `yaml:"name"`    // 可选，标识用途
-	URL     string `yaml:"url"`     // Webhook URL
-	Type    string `yaml:"type"`    // 可选：slack、feishu、custom，默认 custom 发送通用 JSON
+	Enabled bool   `yaml:"enabled" json:"enabled"`
+	Name    string `yaml:"name" json:"name"`    // 可选，标识用途
+	URL     string `yaml:"url" json:"url"`      // Webhook URL
+	Type    string `yaml:"type" json:"type"`    // 可选：slack、feishu、custom，默认 custom 发送通用 JSON
 }
 
 type DingTalkConfig struct {
-	Enabled    bool   `yaml:"enabled"`
-	WebhookURL string `yaml:"webhook_url"`
-	Secret     string `yaml:"secret"`
+	Enabled    bool   `yaml:"enabled" json:"enabled"`
+	WebhookURL string `yaml:"webhook_url" json:"webhook_url"`
+	Secret     string `yaml:"secret" json:"secret"`
 }
 
 type WeComConfig struct {
-	Enabled    bool   `yaml:"enabled"`
-	WebhookURL string `yaml:"webhook_url"`
+	Enabled    bool   `yaml:"enabled" json:"enabled"`
+	WebhookURL string `yaml:"webhook_url" json:"webhook_url"`
 }
 
 type StorageConfig struct {
-	Type string `yaml:"type"` // sqlite | mysql | pgsql；留空时 NewStore 按 mysql 处理
-	Path string `yaml:"path"` // SQLite 文件路径
-	DSN  string `yaml:"dsn"`  // MySQL/PostgreSQL 连接串，如 user:pass@tcp(host:3306)/db
+	Type string `yaml:"type"` // 仅支持 mysql；留空时按 mysql 处理
+	DSN  string `yaml:"dsn"`  // MySQL DSN，如 user:pass@tcp(host:3306)/db?charset=utf8mb4
 }
 
 func Load(path string) (*Config, error) {
@@ -108,15 +107,7 @@ func Load(path string) (*Config, error) {
 				Model: "gemini-2.5-flash",
 			},
 		},
-		Review: ReviewConfig{
-			MaxDiffLines: 5000,
-			Language:     "zh",
-			IgnorePatterns: []string{
-				"*.lock",
-				"vendor/*",
-				"node_modules/*",
-			},
-		},
+		Review:  DefaultReviewConfig(),
 		Storage: StorageConfig{
 			Type: "mysql",
 			DSN:  "user:pass@tcp(127.0.0.1:3306)/ai_review?charset=utf8mb4",
@@ -134,10 +125,20 @@ func Load(path string) (*Config, error) {
 	return cfg, nil
 }
 
-func (c *Config) validate() error {
-	if c.GitHub.Token == "" {
-		return fmt.Errorf("github.token is required")
+// DefaultReviewConfig 为评审模块默认基数；各仓库可通过 github_projects.review_json 覆盖字段。
+func DefaultReviewConfig() ReviewConfig {
+	return ReviewConfig{
+		MaxDiffLines: 5000,
+		Language:     "zh",
+		IgnorePatterns: []string{
+			"*.lock",
+			"vendor/*",
+			"node_modules/*",
+		},
 	}
+}
+
+func (c *Config) validate() error {
 	switch c.AI.Provider {
 	case "claude":
 		if c.AI.Claude.APIKey == "" {

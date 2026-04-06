@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/RicardoMinglu/ai_codereview/internal/config"
@@ -93,7 +94,10 @@ func (d *DingTalkNotifier) Send(ctx context.Context, r *report.ReviewReport, rep
 		return fmt.Errorf("marshal dingtalk message: %w", err)
 	}
 
-	webhookURL := d.webhookURL
+	webhookURL := strings.TrimSpace(d.webhookURL)
+	if webhookURL == "" {
+		return fmt.Errorf("dingtalk webhook_url 为空，请在 notify_json.dingtalk 中填写完整机器人 Webhook 地址（含 https:// 与 access_token）")
+	}
 	if d.secret != "" {
 		webhookURL = d.signURL(webhookURL)
 	}

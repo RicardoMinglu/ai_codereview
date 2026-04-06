@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"log"
+	"strings"
 
 	"github.com/RicardoMinglu/ai_codereview/internal/config"
 	"github.com/RicardoMinglu/ai_codereview/internal/report"
@@ -20,10 +21,18 @@ type MultiNotifier struct {
 func NewMultiNotifier(cfg *config.NotifyConfig) *MultiNotifier {
 	var notifiers []Notifier
 	if cfg.DingTalk.Enabled {
-		notifiers = append(notifiers, NewDingTalkNotifier(cfg.DingTalk))
+		if strings.TrimSpace(cfg.DingTalk.WebhookURL) == "" {
+			log.Printf("notify: dingtalk.enabled 为 true 但 webhook_url 为空，已跳过（请检查项目 notify_json）")
+		} else {
+			notifiers = append(notifiers, NewDingTalkNotifier(cfg.DingTalk))
+		}
 	}
 	if cfg.WeCom.Enabled {
-		notifiers = append(notifiers, NewWeComNotifier(cfg.WeCom))
+		if strings.TrimSpace(cfg.WeCom.WebhookURL) == "" {
+			log.Printf("notify: wecom.enabled 为 true 但 webhook_url 为空，已跳过（请检查项目 notify_json）")
+		} else {
+			notifiers = append(notifiers, NewWeComNotifier(cfg.WeCom))
+		}
 	}
 	for _, wh := range cfg.Webhooks {
 		if wh.Enabled && wh.URL != "" {

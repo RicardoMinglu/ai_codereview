@@ -11,7 +11,7 @@ all: build
 # 编译
 build:
 	@echo "Building..."
-	@CGO_ENABLED=1 go build -o $(BINARY_NAME) $(MAIN_PATH)
+	@CGO_ENABLED=0 go build -o $(BINARY_NAME) $(MAIN_PATH)
 	@echo "Done: $(BINARY_NAME)"
 
 # 运行
@@ -53,7 +53,6 @@ docker-build:
 # Docker 运行（默认配置 server.port 为 8078，与 config.example.yaml 一致）
 docker-run:
 	@docker run -p 8078:8078 \
-		-v $(PWD)/data:/app/data \
 		-v $(PWD)/$(CONFIG):/app/$(CONFIG) \
 		ai-code-review:latest
 

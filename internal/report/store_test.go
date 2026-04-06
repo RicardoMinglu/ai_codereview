@@ -3,22 +3,91 @@ package report
 import (
 	"context"
 	"database/sql"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
+
+	_ "github.com/go-sql-driver/mysql"
 )
 
-func setupTestStore(t *testing.T) *SQLiteStore {
+// testMySQLDSN 设置后可跑与 Store 相关的集成测试（须已建库，且能执行 docs/mysql/init.sql）。
+// CI 中由 workflow 注入；本地不配则测试跳过。
+func testMySQLDSN(t *testing.T) string {
 	t.Helper()
-	store, err := NewSQLiteStore(":memory:")
+	dsn := strings.TrimSpace(os.Getenv("TEST_MYSQL_DSN"))
+	if dsn == "" {
+		t.Skip("set TEST_MYSQL_DSN to run MySQL store tests, e.g. user:pass@tcp(127.0.0.1:3306)/ai_review_test?parseTime=true&multiStatements=true")
+	}
+	if !strings.Contains(dsn, "parseTime=") {
+		if strings.Contains(dsn, "?") {
+			dsn += "&parseTime=true"
+		} else {
+			dsn += "?parseTime=true"
+		}
+	}
+	if !strings.Contains(dsn, "multiStatements=") {
+		if strings.Contains(dsn, "?") {
+			dsn += "&multiStatements=true"
+		} else {
+			dsn += "?multiStatements=true"
+		}
+	}
+	return dsn
+}
+
+func initSQLPath(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller")
+	}
+	dir := filepath.Dir(file)
+	p := filepath.Join(dir, "..", "..", "docs", "mysql", "init.sql")
+	abs, err := filepath.Abs(p)
 	if err != nil {
-		t.Fatalf("NewSQLiteStore: %v", err)
+		t.Fatalf("abs init sql: %v", err)
+	}
+	if _, err := os.Stat(abs); err != nil {
+		t.Fatalf("stat init.sql: %v", err)
+	}
+	return abs
+}
+
+func setupTestMySQLStore(t *testing.T) *MySQLStore {
+	t.Helper()
+	dsn := testMySQLDSN(t)
+	b, err := os.ReadFile(initSQLPath(t))
+	if err != nil {
+		t.Fatalf("read init.sql: %v", err)
+	}
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		t.Fatalf("open mysql: %v", err)
+	}
+	if _, err := db.Exec(string(b)); err != nil {
+		db.Close()
+		t.Fatalf("apply init.sql: %v", err)
+	}
+	db.Close()
+
+	store, err := NewMySQLStore(dsn)
+	if err != nil {
+		t.Fatalf("NewMySQLStore: %v", err)
 	}
 	t.Cleanup(func() { store.Close() })
+
+	if _, err := store.db.ExecContext(context.Background(), "TRUNCATE TABLE reports"); err != nil {
+		store.Close()
+		t.Fatalf("truncate reports: %v", err)
+	}
 	return store
 }
 
 func TestStore_SaveAndGet(t *testing.T) {
-	store := setupTestStore(t)
+	store := setupTestMySQLStore(t)
 	ctx := context.Background()
 
 	rpt := &ReviewReport{
@@ -61,7 +130,7 @@ func TestStore_SaveAndGet(t *testing.T) {
 }
 
 func TestStore_GetNotFound(t *testing.T) {
-	store := setupTestStore(t)
+	store := setupTestMySQLStore(t)
 	ctx := context.Background()
 
 	_, err := store.Get(ctx, "non-existent-id")
@@ -71,10 +140,9 @@ func TestStore_GetNotFound(t *testing.T) {
 }
 
 func TestStore_List(t *testing.T) {
-	store := setupTestStore(t)
+	store := setupTestMySQLStore(t)
 	ctx := context.Background()
 
-	// Save 3 reports
 	for i := 0; i < 3; i++ {
 		rpt := &ReviewReport{
 			RepoFullName: "owner/repo",
@@ -111,7 +179,7 @@ func TestStore_List(t *testing.T) {
 }
 
 func TestStore_ListWithRepoFilter(t *testing.T) {
-	store := setupTestStore(t)
+	store := setupTestMySQLStore(t)
 	ctx := context.Background()
 
 	rpt1 := &ReviewReport{
@@ -146,8 +214,12 @@ func TestStore_ListWithRepoFilter(t *testing.T) {
 		AIModel:      "test",
 		Duration:     1,
 	}
-	store.Save(ctx, rpt1)
-	store.Save(ctx, rpt2)
+	if err := store.Save(ctx, rpt1); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := store.Save(ctx, rpt2); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
 
 	reports, total, err := store.List(ctx, "owner/repo1", 1, 10)
 	if err != nil {
@@ -162,7 +234,7 @@ func TestStore_ListWithRepoFilter(t *testing.T) {
 }
 
 func TestStore_ListPagination(t *testing.T) {
-	store := setupTestStore(t)
+	store := setupTestMySQLStore(t)
 	ctx := context.Background()
 
 	for i := 0; i < 5; i++ {
@@ -183,7 +255,9 @@ func TestStore_ListPagination(t *testing.T) {
 			Duration:     1,
 			CreatedAt:    time.Now().Add(-time.Duration(i) * time.Minute),
 		}
-		store.Save(ctx, rpt)
+		if err := store.Save(ctx, rpt); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
 	}
 
 	page1, total, _ := store.List(ctx, "owner/repo", 1, 2)

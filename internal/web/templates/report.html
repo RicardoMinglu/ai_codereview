@@ -63,16 +63,29 @@
         .retry-btn { padding: 8px 20px; background: #1a1a2e; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 0.9rem; }
         .retry-btn.secondary { background: #64748b; }
         .retry-btn:hover { opacity: 0.9; }
+        .setup-banner { padding: 14px 18px; border-radius: 8px; margin-bottom: 20px; background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
+        .setup-banner a { font-weight: 600; color: #b45309; }
     </style>
 </head>
 <body>
     <header>
         <div class="container">
-            <a href="/">&larr; Back to list</a>
-            <h1>{{.Report.RepoFullName}}</h1>
+            <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between">
+                <a href="/">&larr; 返回列表</a>
+                <span>
+                    <a href="/admin/projects" style="margin-right:12px">项目配置</a>
+                    <a href="/setup">配置引导</a>
+                </span>
+            </div>
+            <h1 style="margin-top:12px">{{.Report.RepoFullName}}</h1>
         </div>
     </header>
     <div class="container">
+        {{if .ShowSetupGuide}}
+        <div class="setup-banner">
+            当前数据库中还没有登记项目（或无法读取项目表）。请先完成 <a href="/admin/projects">项目配置</a>。
+        </div>
+        {{end}}
         {{$s := or .Report.Status "success"}}
         {{if orBool (eq $s "failed") (eq $s "pending")}}
         <div class="status-banner {{$s}}">

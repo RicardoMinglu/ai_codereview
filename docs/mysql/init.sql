@@ -1,6 +1,6 @@
--- Optional: initialize MySQL schema (e.g. Docker docker-entrypoint-initdb.d).
--- The service also runs equivalent DDL on first connect (internal/report/store_mysql.go migrateMySQL).
--- Create database first: CREATE DATABASE ai_review CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+-- MySQL 库表初始化（部署前执行一次，或与 Docker docker-entrypoint-initdb.d 一并挂载）。
+-- 服务启动时不再自动建表，请确保已执行本脚本。
+-- 先建库: CREATE DATABASE ai_review CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS reports (
 	id VARCHAR(36) PRIMARY KEY,
@@ -25,3 +25,18 @@ CREATE TABLE IF NOT EXISTS reports (
 
 CREATE INDEX idx_reports_repo ON reports(repo_full_name);
 CREATE INDEX idx_reports_created ON reports(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS github_projects (
+	id INT AUTO_INCREMENT PRIMARY KEY,
+	repo_full_name VARCHAR(255) NOT NULL UNIQUE,
+	enabled TINYINT(1) NOT NULL DEFAULT 1,
+	github_token TEXT NULL,
+	webhook_secret VARCHAR(512) NULL,
+	review_json JSON NULL,
+	notify_json JSON NULL,
+	push_branches JSON NULL COMMENT '["main","develop"]；NULL 或空数组表示所有分支',
+	created_at DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6),
+	updated_at DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)
+);
+
+CREATE INDEX idx_github_projects_enabled ON github_projects(enabled);

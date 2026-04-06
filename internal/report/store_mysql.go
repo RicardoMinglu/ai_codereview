@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/RicardoMinglu/ai_codereview/internal/project"
 	"github.com/google/uuid"
 	_ "github.com/go-sql-driver/mysql"
 )
@@ -32,46 +33,74 @@ func NewMySQLStore(dsn string) (*MySQLStore, error) {
 		db.Close()
 		return nil, fmt.Errorf("ping mysql: %w", err)
 	}
-	if err := migrateMySQL(db); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("migrate mysql: %w", err)
-	}
 	return &MySQLStore{db: db}, nil
 }
 
-func migrateMySQL(db *sql.DB) error {
-	_, err := db.Exec(`
-		CREATE TABLE IF NOT EXISTS reports (
-			id VARCHAR(36) PRIMARY KEY,
-			created_at DATETIME(6) NOT NULL,
-			repo_full_name VARCHAR(255) NOT NULL,
-			event_type VARCHAR(32) NOT NULL,
-			ref VARCHAR(255) NOT NULL,
-			commit_sha VARCHAR(64) NOT NULL,
-			author VARCHAR(255) NOT NULL,
-			commit_msg TEXT NOT NULL,
-			html_url TEXT NOT NULL,
-			status VARCHAR(32) NOT NULL DEFAULT 'success',
-			error_msg TEXT,
-			score INT NOT NULL,
-			summary TEXT NOT NULL,
-			issues JSON NOT NULL,
-			files_num INT NOT NULL,
-			lines_num INT NOT NULL,
-			ai_model VARCHAR(128) NOT NULL,
-			duration DOUBLE NOT NULL
-		)
-	`)
+// AnyProjectRow 实现 project.Reader：表中是否存在至少一行（用于首页/引导是否提示「尚未登记」）。
+func (s *MySQLStore) AnyProjectRow(ctx context.Context) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM github_projects`).Scan(&n)
 	if err != nil {
-		return err
+		return false, err
 	}
-	// MySQL 无 CREATE INDEX IF NOT EXISTS，忽略已存在错误
-	_, _ = db.Exec("CREATE INDEX idx_reports_repo ON reports(repo_full_name)")
-	_, _ = db.Exec("CREATE INDEX idx_reports_created ON reports(created_at DESC)")
-	// 兼容旧表
-	_, _ = db.Exec("ALTER TABLE reports ADD COLUMN status VARCHAR(32) NOT NULL DEFAULT 'success'")
-	_, _ = db.Exec("ALTER TABLE reports ADD COLUMN error_msg TEXT")
-	return nil
+	return n > 0, nil
+}
+
+func scanPushBranchesJSON(ns sql.NullString) []string {
+	if !ns.Valid || strings.TrimSpace(ns.String) == "" {
+		return nil
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(ns.String), &out); err != nil || len(out) == 0 {
+		return nil
+	}
+	for i := range out {
+		out[i] = project.NormalizePushBranchName(out[i])
+	}
+	return out
+}
+
+func pushBranchesArg(branches []string) (interface{}, error) {
+	if len(branches) == 0 {
+		return nil, nil
+	}
+	b, err := json.Marshal(branches)
+	if err != nil {
+		return nil, err
+	}
+	return string(b), nil
+}
+
+// GetProjectRow 实现 project.Reader：按 owner/repo 取项目配置。
+func (s *MySQLStore) GetProjectRow(ctx context.Context, repoFullName string) (*project.Record, error) {
+	var rec project.Record
+	var tok, wh sql.NullString
+	var revJSON, notifyJSON sql.NullString
+
+	var pushBr sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+		SELECT repo_full_name, enabled, github_token, webhook_secret, review_json, notify_json, push_branches
+		FROM github_projects WHERE repo_full_name = ?
+	`, repoFullName).Scan(
+		&rec.RepoFullName, &rec.Enabled, &tok, &wh, &revJSON, &notifyJSON, &pushBr,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if tok.Valid {
+		rec.GitHubToken = tok.String
+	}
+	if wh.Valid {
+		rec.WebhookSecret = wh.String
+	}
+	if revJSON.Valid && revJSON.String != "" {
+		rec.ReviewJSON = []byte(revJSON.String)
+	}
+	if notifyJSON.Valid && notifyJSON.String != "" {
+		rec.NotifyJSON = []byte(notifyJSON.String)
+	}
+	rec.PushBranches = scanPushBranchesJSON(pushBr)
+	return &rec, nil
 }
 
 func (s *MySQLStore) Save(ctx context.Context, r *ReviewReport) error {
@@ -170,3 +199,162 @@ func (s *MySQLStore) List(ctx context.Context, repo string, page, pageSize int) 
 func (s *MySQLStore) Close() error {
 	return s.db.Close()
 }
+
+// ListProjects 获取所有项目配置（包含 ID）
+func (s *MySQLStore) ListProjects(ctx context.Context) ([]project.Record, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, repo_full_name, enabled, github_token, webhook_secret, review_json, notify_json, push_branches
+		FROM github_projects ORDER BY created_at DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var projects []project.Record
+	for rows.Next() {
+		var rec project.Record
+		var tok, wh sql.NullString
+		var revJSON, notifyJSON, pushBr sql.NullString
+
+		if err := rows.Scan(&rec.ID, &rec.RepoFullName, &rec.Enabled, &tok, &wh, &revJSON, &notifyJSON, &pushBr); err != nil {
+			return nil, err
+		}
+
+		if tok.Valid {
+			rec.GitHubToken = tok.String
+		}
+		if wh.Valid {
+			rec.WebhookSecret = wh.String
+		}
+		if revJSON.Valid && revJSON.String != "" {
+			rec.ReviewJSON = []byte(revJSON.String)
+		}
+		if notifyJSON.Valid && notifyJSON.String != "" {
+			rec.NotifyJSON = []byte(notifyJSON.String)
+		}
+		rec.PushBranches = scanPushBranchesJSON(pushBr)
+
+		projects = append(projects, rec)
+	}
+
+	return projects, rows.Err()
+}
+
+// GetProject 根据 ID 获取项目配置
+func (s *MySQLStore) GetProject(ctx context.Context, id int) (*project.Record, error) {
+	var rec project.Record
+	var tok, wh sql.NullString
+	var revJSON, notifyJSON sql.NullString
+
+	var pushBr sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+		SELECT repo_full_name, enabled, github_token, webhook_secret, review_json, notify_json, push_branches
+		FROM github_projects WHERE id = ?
+	`, id).Scan(&rec.RepoFullName, &rec.Enabled, &tok, &wh, &revJSON, &notifyJSON, &pushBr)
+
+	if err != nil {
+		return nil, err
+	}
+
+	if tok.Valid {
+		rec.GitHubToken = tok.String
+	}
+	if wh.Valid {
+		rec.WebhookSecret = wh.String
+	}
+	if revJSON.Valid && revJSON.String != "" {
+		rec.ReviewJSON = []byte(revJSON.String)
+	}
+	if notifyJSON.Valid && notifyJSON.String != "" {
+		rec.NotifyJSON = []byte(notifyJSON.String)
+	}
+	rec.PushBranches = scanPushBranchesJSON(pushBr)
+
+	return &rec, nil
+}
+
+// AddProject 添加项目配置
+func (s *MySQLStore) AddProject(ctx context.Context, rec *project.Record) error {
+	var githubToken, webhookSecret, reviewJSON, notifyJSON interface{}
+
+	if rec.GitHubToken != "" {
+		githubToken = rec.GitHubToken
+	}
+	if rec.WebhookSecret != "" {
+		webhookSecret = rec.WebhookSecret
+	}
+	if len(rec.ReviewJSON) > 0 {
+		reviewJSON = string(rec.ReviewJSON)
+	}
+	if len(rec.NotifyJSON) > 0 {
+		notifyJSON = string(rec.NotifyJSON)
+	}
+	pushBr, err := pushBranchesArg(rec.PushBranches)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO github_projects (repo_full_name, enabled, github_token, webhook_secret, review_json, notify_json, push_branches)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, rec.RepoFullName, rec.Enabled, githubToken, webhookSecret, reviewJSON, notifyJSON, pushBr)
+
+	return err
+}
+
+// UpdateProject 更新项目配置
+func (s *MySQLStore) UpdateProject(ctx context.Context, rec *project.Record) error {
+	// 从 context 获取 ID
+	id, ok := ctx.Value("project_id").(int)
+	if !ok {
+		return fmt.Errorf("project_id not found in context")
+	}
+
+	var githubToken, webhookSecret, reviewJSON, notifyJSON interface{}
+
+	if rec.GitHubToken != "" {
+		githubToken = rec.GitHubToken
+	}
+	if rec.WebhookSecret != "" {
+		webhookSecret = rec.WebhookSecret
+	}
+	if len(rec.ReviewJSON) > 0 {
+		reviewJSON = string(rec.ReviewJSON)
+	}
+	if len(rec.NotifyJSON) > 0 {
+		notifyJSON = string(rec.NotifyJSON)
+	}
+	pushBr, err := pushBranchesArg(rec.PushBranches)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.db.ExecContext(ctx, `
+		UPDATE github_projects
+		SET repo_full_name=?, enabled=?, github_token=?, webhook_secret=?, review_json=?, notify_json=?, push_branches=?
+		WHERE id=?
+	`, rec.RepoFullName, rec.Enabled, githubToken, webhookSecret, reviewJSON, notifyJSON, pushBr, id)
+
+	return err
+}
+
+// DeleteProject 删除项目配置
+func (s *MySQLStore) DeleteProject(ctx context.Context, id int) error {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM github_projects WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
+}
+

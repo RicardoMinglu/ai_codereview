@@ -6,9 +6,6 @@ config.trigger.yaml
 ai-code-review
 *.exe
 
-# 数据目录
-data/
-
 # IDE
 .idea/
 .vscode/

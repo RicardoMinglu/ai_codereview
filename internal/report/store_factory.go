@@ -2,8 +2,7 @@ package report
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
+	"strings"
 
 	"github.com/RicardoMinglu/ai_codereview/internal/config"
 )
@@ -14,32 +13,17 @@ type StoreCloser interface {
 	Close() error
 }
 
-// NewStore 根据配置创建对应的 Store（storage.type 为空时默认 mysql，与 config.Load 默认一致）
+// NewStore 仅支持 MySQL；storage.type 留空时视为 mysql。
 func NewStore(cfg *config.StorageConfig) (StoreCloser, error) {
-	storageType := cfg.Type
+	storageType := strings.TrimSpace(cfg.Type)
 	if storageType == "" {
 		storageType = "mysql"
 	}
-	switch storageType {
-	case "sqlite":
-		if cfg.Path == "" {
-			cfg.Path = "./data/reviews.db"
-		}
-		if err := os.MkdirAll(filepath.Dir(cfg.Path), 0755); err != nil {
-			return nil, fmt.Errorf("create storage dir: %w", err)
-		}
-		return NewSQLiteStore(cfg.Path)
-	case "mysql":
-		if cfg.DSN == "" {
-			return nil, fmt.Errorf("storage.dsn is required when type is mysql")
-		}
-		return NewMySQLStore(cfg.DSN)
-	case "pgsql", "postgres":
-		if cfg.DSN == "" {
-			return nil, fmt.Errorf("storage.dsn is required when type is pgsql")
-		}
-		return NewPgSQLStore(cfg.DSN)
-	default:
-		return nil, fmt.Errorf("unsupported storage type: %s", cfg.Type)
+	if storageType != "mysql" {
+		return nil, fmt.Errorf("unsupported storage type %q: only \"mysql\" is supported", storageType)
 	}
+	if cfg.DSN == "" {
+		return nil, fmt.Errorf("storage.dsn is required")
+	}
+	return NewMySQLStore(cfg.DSN)
 }

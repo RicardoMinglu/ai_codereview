@@ -32,9 +32,8 @@ go build -o ai-code-review ./cmd/server
 # 构建镜像
 docker build -t ai-code-review .
 
-# 运行（需挂载配置和数据目录；默认与 config.example.yaml 中 server.port 8078 一致）
+# 运行（挂载 config.yaml；DSN 须指向容器可访问的 MySQL；默认端口 8078）
 docker run -p 8078:8078 \
-  -v $(pwd)/data:/app/data \
   -v $(pwd)/config.yaml:/app/config.yaml \
   ai-code-review
 ```
@@ -80,9 +79,8 @@ cp config.example.yaml config.yaml
 | notify.wecom.webhook_url | 条件 | 企业微信机器人 Webhook URL |
 | notify.webhooks | 否 | 第三方平台 Webhook 列表（Slack、飞书、自定义等） |
 | **storage** | | |
-| storage.type | 否 | 存储类型：sqlite、mysql、pgsql；**未配置或留空时按 mysql**（与程序内置默认一致） |
-| storage.path | 条件 | SQLite 文件路径（type=sqlite 时） |
-| storage.dsn | 条件 | MySQL/PostgreSQL 连接串（type=mysql/pgsql 时） |
+| storage.type | 否 | 固定为 **`mysql`**；留空时按 mysql |
+| storage.dsn | **是** | MySQL DSN，如 `user:pass@tcp(127.0.0.1:3306)/ai_review?charset=utf8mb4` |
 
 ### 3.3 最小配置示例
 
@@ -111,30 +109,17 @@ ai:
 
 > 注意：中转站须兼容 OpenAI Chat Completions API 格式，大多数第三方代理均支持。
 
-### 3.5 多数据库支持
+### 3.5 存储（仅 MySQL）
 
-支持 SQLite、MySQL、PostgreSQL：
+部署前创建库并执行 [`docs/mysql/init.sql`](mysql/init.sql)。示例：
 
 ```yaml
-# MySQL（程序与 config.example.yaml 默认；须先创建库如 ai_review，建表在服务首次连接时自动执行）
 storage:
   type: "mysql"
   dsn: "user:pass@tcp(127.0.0.1:3306)/ai_review?charset=utf8mb4"
 ```
 
-可选：用手工或 Docker `docker-entrypoint-initdb.d` 初始化表结构时，参考 [`docs/mysql/init.sql`](mysql/init.sql)。
-
-```yaml
-# SQLite
-storage:
-  type: "sqlite"
-  path: "./data/reviews.db"
-
-# PostgreSQL
-storage:
-  type: "pgsql"
-  dsn: "postgres://user:pass@localhost:5432/ai_review?sslmode=disable"
-```
+Docker 部署时让应用容器能访问 MySQL（DSN 指向对应主机或服务名），并挂载 `config.yaml`。
 
 ### 3.6 第三方平台 Webhook
 
@@ -269,7 +254,7 @@ notify:
 
 ### Q: 数据存储在哪里？
 
-程序内置与 **`config.example.yaml` 默认均为 MySQL**（须先有数据库，建表由服务首次连接时自动完成，亦可用 [`docs/mysql/init.sql`](mysql/init.sql)）。改为 SQLite 时设置 `storage.type: sqlite` 并配置 `path`。使用 Docker 时需让容器能访问 MySQL，SQLite 则挂载数据目录。
+数据仅在 **MySQL**：报告与 `github_projects` 同库；须先建库并执行 [`docs/mysql/init.sql`](mysql/init.sql)。Docker 下挂载 `config.yaml`，DSN 指向可访问的 MySQL。
 
 ---
 

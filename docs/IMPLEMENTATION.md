@@ -16,7 +16,7 @@
 | GitHub | `internal/github/` | 调用 GitHub API 获取 diff |
 | AI | `internal/ai/` | Claude / OpenAI / Gemini，统一 Provider 接口 |
 | 评审 | `internal/reviewer/` | 构建 prompt、调用 AI、解析结果 |
-| 存储 | `internal/report/` | SQLite / MySQL / PostgreSQL，统一 Store 接口 |
+| 存储 | `internal/report/` | **MySQL**，`Store` + `MySQLStore` |
 | 通知 | `internal/notify/` | 钉钉、企业微信、自定义 Webhook |
 | Web | `internal/web/` | 路由、HTTP 处理、模板渲染 |
 
@@ -40,10 +40,9 @@ ai_code_review/
 │   │   └── webhook.go              # 通用 Webhook 通知
 │   ├── report/
 │   │   ├── model.go               # ReviewReport、Issue
-│   │   ├── store.go               # Store 接口 + SQLiteStore + scanRows
-│   │   ├── store_factory.go       # 根据 type 创建对应 Store
-│   │   ├── store_mysql.go
-│   │   └── store_pgsql.go
+│   │   ├── store.go               # Store 接口 + scanRows
+│   │   ├── store_factory.go       # 仅创建 MySQLStore
+│   │   └── store_mysql.go
 │   ├── reviewer/reviewer.go
 │   ├── webhook/handler.go
 │   └── web/
@@ -63,7 +62,7 @@ ai_code_review/
 main.go
   ├── config.Load()
   ├── report.NewStore(&cfg.Storage)
-  │     └── 根据 type 返回 SQLiteStore | MySQLStore | PgSQLStore
+  │     └── 仅 MySQLStore（`storage.type` 须为 mysql）
   ├── ai.NewProvider(&cfg.AI)
   │     └── 根据 provider 返回 Claude | OpenAI | Gemini
   ├── reviewer.New(provider, &cfg.Review)
@@ -226,7 +225,7 @@ type StoreCloser interface {
 | ai_model | TEXT | |
 | duration | REAL/DOUBLE | 秒 |
 
-**工厂** (`store_factory.go`): 根据 `storage.type` 选择 SQLite / MySQL / PgSQL；`type` 为空时默认 MySQL（与 `config.Load` 默认一致）；`sqlite` 时自动创建目录。
+**工厂** (`store_factory.go`): 仅支持 `storage.type=mysql`（留空视同 mysql），须配置 `storage.dsn`。
 
 ---
 
@@ -317,13 +316,13 @@ type Issue struct {
 | ai | provider, claude/api_key+model, openai/api_key+model+base_url, gemini/api_key+model |
 | review | max_diff_lines, language, ignore_patterns |
 | notify | dingtalk, wecom, webhooks[] |
-| storage | type, path, dsn |
+| storage | type（mysql）、dsn |
 
 ### 5.2 校验规则
 
 - `github.token` 必填
 - 根据 `ai.provider` 校验对应 `api_key`
-- `storage.type=mysql|pgsql` 时 `storage.dsn` 必填
+- `storage.dsn` 必填（MySQL）
 
 ---
 

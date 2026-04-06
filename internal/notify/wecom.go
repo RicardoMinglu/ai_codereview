@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/RicardoMinglu/ai_codereview/internal/config"
 	"github.com/RicardoMinglu/ai_codereview/internal/report"
@@ -59,7 +60,12 @@ func (w *WeComNotifier) Send(ctx context.Context, r *report.ReviewReport, report
 		return fmt.Errorf("marshal wecom message: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.webhookURL, bytes.NewReader(body))
+	url := strings.TrimSpace(w.webhookURL)
+	if url == "" {
+		return fmt.Errorf("wecom webhook_url 为空，请在 notify_json.wecom 中填写完整 Webhook 地址")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("create wecom request: %w", err)
 	}
